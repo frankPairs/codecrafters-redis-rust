@@ -28,29 +28,6 @@ pub struct CommandReader<'a> {
     stream: &'a mut TcpStream,
 }
 
-pub struct CommandDecoder;
-
-impl CommandDecoder {
-    pub fn decode(resp: RespDataType) -> Result<Command, CommandDecoderError> {
-        match resp {
-            RespDataType::Array(v) => {
-                let values: Vec<&str> = v.iter().filter_map(|dt| dt.as_string()).collect();
-
-                if values.is_empty() {
-                    return Err(CommandDecoderError::EmptyCommand);
-                }
-
-                if values.len() == 1 {
-                    return values.first().unwrap().to_string().try_into();
-                }
-
-                todo!("Implement logic when command contains more than 1 value");
-            }
-            _ => Err(CommandDecoderError::InvalidType),
-        }
-    }
-}
-
 impl<'a> CommandReader<'a> {
     pub fn new(stream: &'a mut TcpStream) -> Self {
         CommandReader { stream }
@@ -79,26 +56,28 @@ impl<'a> CommandReader<'a> {
 
 #[derive(Debug)]
 pub enum Command {
-    PING,
-    PONG,
+    Ping,
+    Pong,
 }
 
 impl std::fmt::Display for Command {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Command::PING => write!(f, "PING"),
-            Command::PONG => write!(f, "PONG"),
+            Command::Ping => write!(f, "PING"),
+            Command::Pong => write!(f, "PONG"),
         }
     }
 }
 
-impl TryFrom<String> for Command {
+impl TryFrom<RespDataType> for Command {
     type Error = CommandDecoderError;
 
-    fn try_from(value: String) -> Result<Self, Self::Error> {
-        match value.as_str() {
-            "PING" => Ok(Command::PING),
-            "PONG" => Ok(Command::PONG),
+    fn try_from(values: RespDataType) -> Result<Self, Self::Error> {
+        let stringify_values = values.to_string();
+
+        match stringify_values {
+            v if v.starts_with("PING") => Ok(Command::Ping),
+            v if v.starts_with("PONG") => Ok(Command::Pong),
             _ => Err(CommandDecoderError::InvalidType),
         }
     }

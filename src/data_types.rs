@@ -1,18 +1,27 @@
 use std::str::Lines;
 
 #[derive(Debug)]
+
 pub enum RespDataType {
     Array(Vec<RespDataType>),
     BulkString(String),
     SimpleString(String),
 }
 
-impl RespDataType {
-    pub fn as_string(&self) -> Option<&str> {
+impl std::fmt::Display for RespDataType {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            RespDataType::BulkString(value) => Some(value),
-            RespDataType::SimpleString(value) => Some(value),
-            _ => None,
+            RespDataType::BulkString(value) => write!(f, "{}", value),
+            RespDataType::SimpleString(value) => write!(f, "{}", value),
+            RespDataType::Array(values) => {
+                let values_str = values
+                    .iter()
+                    .map(|v| v.to_string())
+                    .collect::<Vec<String>>()
+                    .join(" ");
+
+                write!(f, "{}", values_str)
+            }
         }
     }
 }

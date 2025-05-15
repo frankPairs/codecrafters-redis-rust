@@ -1,6 +1,6 @@
 use std::net::TcpListener;
 
-use codecrafters_redis::commands::{CommandDecoder, CommandReader};
+use codecrafters_redis::commands::{Command, CommandReader};
 use codecrafters_redis::data_types::RespDecoder;
 use codecrafters_redis::response::{Response, ResponseBuilder};
 
@@ -9,20 +9,25 @@ fn main() {
 
     for stream in listener.incoming() {
         match stream {
-            Ok(mut stream) => {
+            Ok(mut stream) => loop {
                 let mut reader = CommandReader::new(&mut stream);
                 let message = reader.read();
                 let mut lines = message.lines();
 
+                if message.is_empty() {
+                    break;
+                }
+
                 let resp_data_type =
                     RespDecoder::decode(&mut lines).expect("Error when decoding string to RESP");
+
                 let command =
-                    CommandDecoder::decode(resp_data_type).expect("Error when decoding a command");
+                    Command::try_from(resp_data_type).expect("Error when decoding a command");
 
                 let response = ResponseBuilder::new(command).build();
 
                 response.reply(&mut stream);
-            }
+            },
             Err(e) => {
                 println!("error: {}", e);
             }

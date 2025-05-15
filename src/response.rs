@@ -13,7 +13,7 @@ pub struct PingResponse;
 
 impl Response for PingResponse {
     fn reply(self, stream: &mut TcpStream) {
-        let res = RespEncoder::encode(RespDataType::SimpleString(Command::PONG.to_string()));
+        let res = RespEncoder::encode(RespDataType::SimpleString(Command::Pong.to_string()));
 
         let _ = stream.write_all(res.as_bytes());
     }
@@ -30,8 +30,8 @@ impl ResponseBuilder {
 
     pub fn build(self) -> impl Response {
         match self.command {
-            Command::PING => PingResponse,
-            Command::PONG => PingResponse,
+            Command::Ping => PingResponse,
+            Command::Pong => PingResponse,
         }
     }
 }
