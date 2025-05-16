@@ -1,33 +1,37 @@
 use std::net::TcpListener;
 
-use codecrafters_redis::commands::{Command, CommandReader};
+use codecrafters_redis::commands::Command;
 use codecrafters_redis::data_types::RespDecoder;
 use codecrafters_redis::response::{Response, ResponseBuilder};
+use codecrafters_redis::tcp::TcpStreamReader;
 
 fn main() {
     let listener = TcpListener::bind("127.0.0.1:6379").unwrap();
 
     for stream in listener.incoming() {
         match stream {
-            Ok(mut stream) => loop {
-                let mut reader = CommandReader::new(&mut stream);
-                let message = reader.read();
-                let mut lines = message.lines();
+            Ok(mut stream) => {
+                std::thread::spawn(move || loop {
+                    let mut reader = TcpStreamReader::new(&mut stream);
+                    let message = reader.read();
 
-                if message.is_empty() {
-                    break;
-                }
+                    if message.is_empty() {
+                        break;
+                    }
 
-                let resp_data_type =
-                    RespDecoder::decode(&mut lines).expect("Error when decoding string to RESP");
+                    let mut lines = message.lines();
 
-                let command =
-                    Command::try_from(resp_data_type).expect("Error when decoding a command");
+                    let resp_data_type = RespDecoder::decode(&mut lines)
+                        .expect("Error when decoding string to RESP");
 
-                let response = ResponseBuilder::new(command).build();
+                    let command =
+                        Command::try_from(resp_data_type).expect("Error when decoding a command");
 
-                response.reply(&mut stream);
-            },
+                    let response = ResponseBuilder::new(command).build();
+
+                    response.reply(&mut stream);
+                });
+            }
             Err(e) => {
                 println!("error: {}", e);
             }

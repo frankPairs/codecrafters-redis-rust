@@ -1,9 +1,4 @@
-use std::io::Read;
-use std::net::TcpStream;
-
 use crate::data_types::RespDataType;
-
-const MAX_BYTES_STREAM_BUFFER: usize = 256;
 
 #[derive(Debug)]
 pub enum CommandDecoderError {
@@ -21,36 +16,6 @@ impl std::fmt::Display for CommandDecoderError {
                 write!(f, "Empty command error.")
             }
         }
-    }
-}
-
-pub struct CommandReader<'a> {
-    stream: &'a mut TcpStream,
-}
-
-impl<'a> CommandReader<'a> {
-    pub fn new(stream: &'a mut TcpStream) -> Self {
-        CommandReader { stream }
-    }
-
-    pub fn read(&mut self) -> String {
-        let mut bytes_received: Vec<u8> = vec![];
-        let mut buffer = [0u8; MAX_BYTES_STREAM_BUFFER];
-
-        loop {
-            let bytes_read = self
-                .stream
-                .read(&mut buffer)
-                .expect("An error ocurred while reading from stream");
-
-            bytes_received.extend_from_slice(&buffer[..bytes_read]);
-
-            if bytes_read < MAX_BYTES_STREAM_BUFFER {
-                break;
-            }
-        }
-
-        String::from_utf8_lossy(&bytes_received).to_string()
     }
 }
 
