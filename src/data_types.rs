@@ -8,24 +8,6 @@ pub enum RespDataType {
     SimpleString(String),
 }
 
-impl std::fmt::Display for RespDataType {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            RespDataType::BulkString(value) => write!(f, "{}", value),
-            RespDataType::SimpleString(value) => write!(f, "{}", value),
-            RespDataType::Array(values) => {
-                let values_str = values
-                    .iter()
-                    .map(|v| v.to_string())
-                    .collect::<Vec<String>>()
-                    .join(" ");
-
-                write!(f, "{}", values_str)
-            }
-        }
-    }
-}
-
 pub struct RespDecoder;
 
 impl RespDecoder {

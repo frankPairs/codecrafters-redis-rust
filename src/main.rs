@@ -1,8 +1,7 @@
 use std::net::TcpListener;
 
-use codecrafters_redis::commands::Command;
+use codecrafters_redis::commands::CommandConverter;
 use codecrafters_redis::data_types::RespDecoder;
-use codecrafters_redis::response::{Response, ResponseBuilder};
 use codecrafters_redis::tcp::TcpStreamReader;
 
 fn main() {
@@ -24,12 +23,12 @@ fn main() {
                     let resp_data_type = RespDecoder::decode(&mut lines)
                         .expect("Error when decoding string to RESP");
 
-                    let command =
-                        Command::try_from(resp_data_type).expect("Error when decoding a command");
+                    let command = CommandConverter::try_from(resp_data_type)
+                        .expect("Error when decoding a command")
+                        .convert()
+                        .expect("Invalid command");
 
-                    let response = ResponseBuilder::new(command).build();
-
-                    response.reply(&mut stream);
+                    command.reply(&mut stream);
                 });
             }
             Err(e) => {
