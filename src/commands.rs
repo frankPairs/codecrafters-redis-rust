@@ -1,13 +1,17 @@
-use std::io::Write;
+use std::io::{self, Write};
 use std::net::TcpStream;
+use std::sync::{Arc, Mutex};
 
 use crate::data_types::{RespDataType, RespEncoder};
+use crate::store::{Store, StoreValue};
 
 #[derive(Debug)]
 pub enum CommandError {
     InvalidCommand(String),
     InvalidFormat(String),
     EmptyCommand,
+    Store(String),
+    Reply(io::Error),
 }
 
 impl std::fmt::Display for CommandError {
@@ -22,45 +26,22 @@ impl std::fmt::Display for CommandError {
             CommandError::EmptyCommand => {
                 write!(f, "Empty command error.")
             }
-        }
-    }
-}
-
-pub struct CommandConverter {
-    values: Vec<String>,
-}
-
-impl CommandConverter {
-    pub fn convert(&self) -> Result<Box<dyn Command>, CommandError> {
-        let command_name = self.get_command_name().ok_or(CommandError::EmptyCommand)?;
-
-        match command_name {
-            name if name.starts_with("PING") => Ok(Box::new(PingCommand)),
-            name if name.starts_with("ECHO") => Ok(Box::new(EchoCommand(self.values.clone()))),
-            _ => Err(CommandError::InvalidCommand(
-                "Command does not exists".to_string(),
-            )),
-        }
-    }
-
-    /// The first (and sometimes also the second) bulk string in the array is the command's name.
-    fn get_command_name(&self) -> Option<String> {
-        match self.values.len() {
-            0 => None,
-            1 => self.values.first().cloned(),
-            _ => {
-                let command_values = self.values.iter().take(2).cloned().collect::<String>();
-
-                Some(command_values)
+            CommandError::Reply(err) => {
+                write!(f, "Command reply error: {}", err)
+            }
+            CommandError::Store(err) => {
+                write!(f, "Store error: {}", err)
             }
         }
     }
 }
 
-impl TryFrom<RespDataType> for CommandConverter {
-    type Error = CommandError;
+pub struct CommandBuilder {
+    args: Vec<String>,
+}
 
-    fn try_from(value: RespDataType) -> Result<Self, Self::Error> {
+impl CommandBuilder {
+    pub fn from_resp_data_type(value: RespDataType) -> Result<CommandBuilder, CommandError> {
         match value {
             RespDataType::Array(values) => {
                 let str_values = values
@@ -71,22 +52,55 @@ impl TryFrom<RespDataType> for CommandConverter {
                     })
                     .collect::<Vec<String>>();
 
-                Ok(CommandConverter { values: str_values })
+                Ok(CommandBuilder { args: str_values })
             }
             _ => Err(CommandError::InvalidCommand(String::from(
                 "Command must be an array",
             ))),
         }
     }
+
+    pub fn build(&self, store: Arc<Mutex<Store>>) -> Result<Box<dyn Command>, CommandError> {
+        let command_name = self.get_command_name().ok_or(CommandError::EmptyCommand)?;
+
+        match command_name {
+            name if name.starts_with("PING") => Ok(Box::new(PingCommand)),
+            name if name.starts_with("ECHO") => Ok(Box::new(EchoCommand::new(self.args.clone()))),
+            name if name.starts_with("SET") => {
+                Ok(Box::new(SetCommand::new(self.args.clone(), store)))
+            }
+            name if name.starts_with("GET") => {
+                Ok(Box::new(GetCommand::new(self.args.clone(), store)))
+            }
+            _ => Err(CommandError::InvalidCommand(
+                "Command does not exists".to_string(),
+            )),
+        }
+    }
+
+    /// The first (and sometimes also the second) bulk string in the array is the command's name.
+    fn get_command_name(&self) -> Option<String> {
+        match self.args.len() {
+            0 => None,
+            1 => self.args.first().cloned(),
+            _ => {
+                let command_values = self.args.iter().take(2).cloned().collect::<String>();
+
+                Some(command_values)
+            }
+        }
+    }
 }
 
 pub trait Command {
-    fn generate(&self) -> String;
+    fn generate_reply(&self) -> Result<String, CommandError>;
 
-    fn reply(&self, stream: &mut TcpStream) {
-        let buf = self.generate();
+    fn reply(&self, stream: &mut TcpStream) -> Result<(), CommandError> {
+        let buf = self.generate_reply()?;
 
-        let _ = stream.write_all(buf.as_bytes());
+        stream
+            .write_all(buf.as_bytes())
+            .map_err(CommandError::Reply)
     }
 }
 
@@ -94,18 +108,108 @@ pub trait Command {
 struct PingCommand;
 
 impl Command for PingCommand {
-    fn generate(&self) -> String {
-        RespEncoder::encode(RespDataType::SimpleString("PONG".to_string()))
+    fn generate_reply(&self) -> Result<String, CommandError> {
+        Ok(RespEncoder::encode(RespDataType::SimpleString(
+            "PONG".to_string(),
+        )))
     }
 }
 
 #[derive(Debug)]
-struct EchoCommand(Vec<String>);
+struct EchoCommand {
+    args: Vec<String>,
+}
+
+impl EchoCommand {
+    fn new(args: Vec<String>) -> Self {
+        Self { args }
+    }
+}
 
 impl Command for EchoCommand {
-    fn generate(&self) -> String {
-        let arg = self.0.iter().skip(1).take(1).cloned().collect::<String>();
+    fn generate_reply(&self) -> Result<String, CommandError> {
+        let arg = self
+            .args
+            .iter()
+            .skip(1)
+            .take(1)
+            .cloned()
+            .collect::<String>();
 
-        RespEncoder::encode(RespDataType::BulkString(arg.to_string()))
+        Ok(RespEncoder::encode(RespDataType::BulkString(
+            arg.to_string(),
+        )))
+    }
+}
+
+#[derive(Debug)]
+struct SetCommand {
+    store: Arc<Mutex<Store>>,
+    args: Vec<String>,
+}
+
+impl SetCommand {
+    fn new(args: Vec<String>, store: Arc<Mutex<Store>>) -> Self {
+        Self { args, store }
+    }
+}
+
+impl Command for SetCommand {
+    fn generate_reply(&self) -> Result<String, CommandError> {
+        let args = self.args.iter().skip(1).cloned().collect::<Vec<String>>();
+        let key = args.first().ok_or(CommandError::InvalidFormat(
+            "SET command is missing the key property".to_string(),
+        ))?;
+        let value = args
+            .last()
+            .ok_or(CommandError::InvalidFormat(
+                "SET command is missing the value property".to_string(),
+            ))?
+            .to_owned();
+
+        let mut store = self.store.lock().map_err(|_| {
+            CommandError::Store(format!(
+                "Error when trying the set the value {} to {}",
+                value, key
+            ))
+        })?;
+
+        store.set(key, StoreValue { value });
+
+        Ok(RespEncoder::encode(RespDataType::SimpleString(
+            "OK".to_string(),
+        )))
+    }
+}
+
+#[derive(Debug)]
+struct GetCommand {
+    store: Arc<Mutex<Store>>,
+    args: Vec<String>,
+}
+
+impl GetCommand {
+    fn new(args: Vec<String>, store: Arc<Mutex<Store>>) -> Self {
+        Self { args, store }
+    }
+}
+
+impl Command for GetCommand {
+    fn generate_reply(&self) -> Result<String, CommandError> {
+        let args = self.args.iter().skip(1).cloned().collect::<Vec<String>>();
+        let key = args.first().ok_or(CommandError::InvalidFormat(
+            "SET command is missing the key property".to_string(),
+        ))?;
+
+        let store = self.store.lock().map_err(|_| {
+            CommandError::Store(format!("Error when trying the get value from {}", key))
+        })?;
+
+        match store.get(key) {
+            Some(store_value) => Ok(RespEncoder::encode(RespDataType::BulkString(
+                store_value.value.clone(),
+            ))),
+            None => Ok(RespEncoder::encode(RespDataType::NullBulkString)),
+        }
     }
 }

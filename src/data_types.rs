@@ -5,7 +5,21 @@ use std::str::Lines;
 pub enum RespDataType {
     Array(Vec<RespDataType>),
     BulkString(String),
+    NullBulkString,
     SimpleString(String),
+}
+
+#[derive(Debug)]
+pub enum RespDecoderError {
+    InvalidRespDataType,
+}
+
+impl std::fmt::Display for RespDecoderError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            RespDecoderError::InvalidRespDataType => write!(f, "Invalid RESP data type"),
+        }
+    }
 }
 
 pub struct RespDecoder;
@@ -44,19 +58,6 @@ impl RespDecoder {
     }
 }
 
-#[derive(Debug)]
-pub enum RespDecoderError {
-    InvalidRespDataType,
-}
-
-impl std::fmt::Display for RespDecoderError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            RespDecoderError::InvalidRespDataType => write!(f, "Invalid RESP data type"),
-        }
-    }
-}
-
 pub struct RespEncoder;
 
 impl RespEncoder {
@@ -68,6 +69,7 @@ impl RespEncoder {
             RespDataType::BulkString(value) => {
                 format!("${}\r\n{}\r\n", value.len(), value)
             }
+            RespDataType::NullBulkString => "$-1\r\n".to_string(),
             RespDataType::Array(data_types) => {
                 let size = data_types.len();
                 let mut encoded_value = format!("*{}\r\n", size);
