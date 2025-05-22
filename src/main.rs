@@ -12,7 +12,7 @@ fn main() {
     for stream in listener.incoming() {
         match stream {
             Ok(mut stream) => {
-                let store_cloned = Arc::clone(&store);
+                let store_cloned = store.clone();
 
                 std::thread::spawn(move || loop {
                     let mut reader = TcpStreamReader::new(&mut stream);
@@ -29,7 +29,7 @@ fn main() {
 
                     let command = CommandBuilder::from_resp_data_type(resp_data_type)
                         .expect("Error when decoding a command")
-                        .build(Arc::clone(&store_cloned))
+                        .build(store_cloned.clone())
                         .expect("Invalid command");
 
                     command.reply(&mut stream).unwrap();

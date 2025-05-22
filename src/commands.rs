@@ -2,13 +2,17 @@ use std::io::{self, Write};
 use std::net::TcpStream;
 use std::sync::{Arc, Mutex};
 
+use chrono::{DateTime, Duration, Utc};
+
 use crate::data_types::{RespDataType, RespEncoder};
-use crate::store::{Store, StoreValue};
+use crate::store::{Store, StoreValueBuilder};
 
 #[derive(Debug)]
 pub enum CommandError {
     InvalidCommand(String),
     InvalidFormat(String),
+    InvalidCommandOptionName(String),
+    InvalidCommandOptionValue(String),
     EmptyCommand,
     Store(String),
     Reply(io::Error),
@@ -22,6 +26,12 @@ impl std::fmt::Display for CommandError {
             }
             CommandError::InvalidFormat(err) => {
                 write!(f, "Invalid Format Error: {}", err)
+            }
+            CommandError::InvalidCommandOptionName(err) => {
+                write!(f, "Invalid Command Option Name Error: {}", err)
+            }
+            CommandError::InvalidCommandOptionValue(err) => {
+                write!(f, "Invalid Command Option Value Error: {}", err)
             }
             CommandError::EmptyCommand => {
                 write!(f, "Empty command error.")
@@ -63,7 +73,7 @@ impl CommandBuilder {
     pub fn build(&self, store: Arc<Mutex<Store>>) -> Result<Box<dyn Command>, CommandError> {
         let command_name = self.get_command_name().ok_or(CommandError::EmptyCommand)?;
 
-        match command_name {
+        match command_name.to_uppercase() {
             name if name.starts_with("PING") => Ok(Box::new(PingCommand)),
             name if name.starts_with("ECHO") => Ok(Box::new(EchoCommand::new(self.args.clone()))),
             name if name.starts_with("SET") => {
@@ -128,17 +138,58 @@ impl EchoCommand {
 
 impl Command for EchoCommand {
     fn generate_reply(&self) -> Result<String, CommandError> {
-        let arg = self
-            .args
-            .iter()
-            .skip(1)
-            .take(1)
-            .cloned()
-            .collect::<String>();
+        let arg = self.args.get(1).ok_or(CommandError::InvalidFormat(
+            "ECHO command is missing a value".to_string(),
+        ))?;
 
         Ok(RespEncoder::encode(RespDataType::BulkString(
             arg.to_string(),
         )))
+    }
+}
+
+enum SetCommandOption {
+    PX(DateTime<Utc>),
+}
+
+struct SetCommandOptionParser;
+
+impl SetCommandOptionParser {
+    fn parse(args: Vec<String>) -> Result<Vec<SetCommandOption>, CommandError> {
+        let mut options: Vec<SetCommandOption> = vec![];
+        let chunks = args.chunks(2);
+
+        for chunk in chunks {
+            let option_name = chunk.first().ok_or(CommandError::InvalidCommandOptionName(
+                "Command option cannot be None.".to_string(),
+            ))?;
+
+            match option_name.to_uppercase().as_str() {
+                "PX" => {
+                    let option_value =
+                        chunk.get(1).ok_or(CommandError::InvalidCommandOptionValue(
+                            "PX option must contain a number.".to_string(),
+                        ))?;
+                    let option_value: i64 = option_value.parse().map_err(|_| {
+                        CommandError::InvalidCommandOptionValue(
+                            "PX option must contain a positive number.".to_string(),
+                        )
+                    })?;
+
+                    let exp = Utc::now() + Duration::milliseconds(option_value);
+
+                    options.push(SetCommandOption::PX(exp));
+                }
+                option => {
+                    return Err(CommandError::InvalidCommandOptionName(format!(
+                        "Command option {} is not valid.",
+                        option
+                    )))
+                }
+            };
+        }
+
+        Ok(options)
     }
 }
 
@@ -156,16 +207,26 @@ impl SetCommand {
 
 impl Command for SetCommand {
     fn generate_reply(&self) -> Result<String, CommandError> {
-        let args = self.args.iter().skip(1).cloned().collect::<Vec<String>>();
-        let key = args.first().ok_or(CommandError::InvalidFormat(
-            "SET command is missing the key property".to_string(),
+        let mut args = self.args.iter().skip(1);
+        let key = args.next().ok_or(CommandError::InvalidFormat(
+            "SET command must contain a key".to_string(),
         ))?;
-        let value = args
-            .last()
-            .ok_or(CommandError::InvalidFormat(
-                "SET command is missing the value property".to_string(),
-            ))?
-            .to_owned();
+        let value = args.next().ok_or(CommandError::InvalidFormat(
+            "SET command must contain a value".to_string(),
+        ))?;
+
+        let args: Vec<String> = args.cloned().collect();
+
+        let mut store_value_builder = StoreValueBuilder::new(value);
+        let options = SetCommandOptionParser::parse(args)?;
+
+        for option in options {
+            match option {
+                SetCommandOption::PX(exp) => {
+                    store_value_builder.with_exp(exp);
+                }
+            };
+        }
 
         let mut store = self.store.lock().map_err(|_| {
             CommandError::Store(format!(
@@ -174,7 +235,9 @@ impl Command for SetCommand {
             ))
         })?;
 
-        store.set(key, StoreValue { value });
+        let store_value = store_value_builder.build();
+
+        store.set(key, store_value);
 
         Ok(RespEncoder::encode(RespDataType::SimpleString(
             "OK".to_string(),
@@ -196,9 +259,9 @@ impl GetCommand {
 
 impl Command for GetCommand {
     fn generate_reply(&self) -> Result<String, CommandError> {
-        let args = self.args.iter().skip(1).cloned().collect::<Vec<String>>();
-        let key = args.first().ok_or(CommandError::InvalidFormat(
-            "SET command is missing the key property".to_string(),
+        let mut args = self.args.iter().skip(1);
+        let key = args.next().ok_or(CommandError::InvalidFormat(
+            "GET command must contain a key".to_string(),
         ))?;
 
         let store = self.store.lock().map_err(|_| {
@@ -206,9 +269,22 @@ impl Command for GetCommand {
         })?;
 
         match store.get(key) {
-            Some(store_value) => Ok(RespEncoder::encode(RespDataType::BulkString(
-                store_value.value.clone(),
-            ))),
+            Some(store_value) => match store_value.exp {
+                Some(exp) => {
+                    let now = Utc::now();
+
+                    if exp < now {
+                        Ok(RespEncoder::encode(RespDataType::NullBulkString))
+                    } else {
+                        Ok(RespEncoder::encode(RespDataType::BulkString(
+                            store_value.value.clone(),
+                        )))
+                    }
+                }
+                None => Ok(RespEncoder::encode(RespDataType::BulkString(
+                    store_value.value.clone(),
+                ))),
+            },
             None => Ok(RespEncoder::encode(RespDataType::NullBulkString)),
         }
     }
