@@ -1,43 +1,29 @@
-use codecrafters_redis::commands::CommandBuilder;
-use codecrafters_redis::data_types::RespDecoder;
-use codecrafters_redis::store::Store;
-use codecrafters_redis::tcp::TcpStreamReader;
-use std::net::TcpListener;
-use std::sync::{Arc, Mutex};
+use clap::Parser;
+
+use codecrafters_redis::server::Server;
+
+#[derive(Parser, Debug)]
+#[command(version, about, long_about = None)]
+struct Args {
+    /// The path to the directory where the RDB file is stored (example: /tmp/redis-data)
+    #[arg(long)]
+    dir: Option<String>,
+    /// The name of the RDB file (example: rdbfile)
+    #[arg(long)]
+    dbfilename: Option<String>,
+}
 
 fn main() {
-    let listener = TcpListener::bind("127.0.0.1:6379").unwrap();
-    let store = Arc::new(Mutex::new(Store::default()));
+    let cli_args = Args::parse();
+    let mut server = Server::new("127.0.0.1:6379");
 
-    for stream in listener.incoming() {
-        match stream {
-            Ok(mut stream) => {
-                let store_cloned = store.clone();
-
-                std::thread::spawn(move || loop {
-                    let mut reader = TcpStreamReader::new(&mut stream);
-                    let message = reader.read();
-
-                    if message.is_empty() {
-                        break;
-                    }
-
-                    let mut lines = message.lines();
-
-                    let resp_data_type = RespDecoder::decode(&mut lines)
-                        .expect("Error when decoding string to RESP");
-
-                    let command = CommandBuilder::from_resp_data_type(resp_data_type)
-                        .expect("Error when decoding a command")
-                        .build(store_cloned.clone())
-                        .expect("Invalid command");
-
-                    command.reply(&mut stream).unwrap();
-                });
-            }
-            Err(e) => {
-                println!("error: {}", e);
-            }
-        }
+    if let Some(dir) = cli_args.dir {
+        server.with_dir(&dir);
     }
+
+    if let Some(dbfilename) = cli_args.dbfilename {
+        server.with_dbfilename(&dbfilename);
+    }
+
+    server.listen().unwrap();
 }

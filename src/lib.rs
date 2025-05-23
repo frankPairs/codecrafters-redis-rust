@@ -1,4 +1,5 @@
 pub mod commands;
 pub mod data_types;
-pub mod tcp;
+pub mod server;
 pub mod store;
+pub mod tcp;

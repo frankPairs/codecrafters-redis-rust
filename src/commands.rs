@@ -5,6 +5,7 @@ use std::sync::{Arc, Mutex};
 use chrono::{DateTime, Duration, Utc};
 
 use crate::data_types::{RespDataType, RespEncoder};
+use crate::server::ServerConfig;
 use crate::store::{Store, StoreValueBuilder};
 
 #[derive(Debug)]
@@ -70,7 +71,11 @@ impl CommandBuilder {
         }
     }
 
-    pub fn build(&self, store: Arc<Mutex<Store>>) -> Result<Box<dyn Command>, CommandError> {
+    pub fn build(
+        &self,
+        store: Arc<Mutex<Store>>,
+        server_config: Arc<ServerConfig>,
+    ) -> Result<Box<dyn Command>, CommandError> {
         let command_name = self.get_command_name().ok_or(CommandError::EmptyCommand)?;
 
         match command_name.to_uppercase() {
@@ -82,6 +87,10 @@ impl CommandBuilder {
             name if name.starts_with("GET") => {
                 Ok(Box::new(GetCommand::new(self.args.clone(), store)))
             }
+            name if name.starts_with("CONFIG GET") => Ok(Box::new(ConfigGetCommand::new(
+                self.args.clone(),
+                server_config,
+            ))),
             _ => Err(CommandError::InvalidCommand(
                 "Command does not exists".to_string(),
             )),
@@ -94,9 +103,9 @@ impl CommandBuilder {
             0 => None,
             1 => self.args.first().cloned(),
             _ => {
-                let command_values = self.args.iter().take(2).cloned().collect::<String>();
+                let command_values = self.args.iter().take(2).cloned().collect::<Vec<String>>();
 
-                Some(command_values)
+                Some(command_values.join(" "))
             }
         }
     }
@@ -285,6 +294,44 @@ impl Command for GetCommand {
                     store_value.value.clone(),
                 ))),
             },
+            None => Ok(RespEncoder::encode(RespDataType::NullBulkString)),
+        }
+    }
+}
+
+#[derive(Debug)]
+struct ConfigGetCommand {
+    args: Vec<String>,
+    server_config: Arc<ServerConfig>,
+}
+
+impl ConfigGetCommand {
+    fn new(args: Vec<String>, server_config: Arc<ServerConfig>) -> Self {
+        Self {
+            args,
+            server_config,
+        }
+    }
+}
+
+impl Command for ConfigGetCommand {
+    fn generate_reply(&self) -> Result<String, CommandError> {
+        let mut args = self.args.iter().skip(2);
+        let config_key = args.next().ok_or(CommandError::InvalidFormat(
+            "CONFIG GET command must contain at least one configuration key".to_string(),
+        ))?;
+
+        let config_value = match config_key.as_str() {
+            "dir" => self.server_config.dir.clone(),
+            "dbfilename" => self.server_config.dbfilename.clone(),
+            _ => None,
+        };
+
+        match config_value {
+            Some(value) => Ok(RespEncoder::encode(RespDataType::Array(vec![
+                RespDataType::BulkString(config_key.to_string()),
+                RespDataType::BulkString(value),
+            ]))),
             None => Ok(RespEncoder::encode(RespDataType::NullBulkString)),
         }
     }
