@@ -1,5 +1,9 @@
+use anyhow::Context;
+// use tokio::fs::File;
+
 use clap::Parser;
 
+// use codecrafters_redis::rdb_decoder::RdbFileDecoder;
 use codecrafters_redis::server::Server;
 
 #[derive(Parser, Debug)]
@@ -13,17 +17,32 @@ struct Args {
     dbfilename: Option<String>,
 }
 
-fn main() {
+#[tokio::main]
+async fn main() -> anyhow::Result<()> {
     let cli_args = Args::parse();
+    // let file = File::open("dump.rdb")
+    //     .await
+    //     .context("Failed to read RDB backup file")?;
+    // let content = RdbFileDecoder::decode(file).expect("Error when decoding RDB file data");
+
     let mut server = Server::new("127.0.0.1:6379");
 
     if let Some(dir) = cli_args.dir {
-        server.with_dir(&dir);
+        server
+            .with_dir(&dir)
+            .with_context(|| format!("Failed to read {} directory", dir))?;
     }
 
     if let Some(dbfilename) = cli_args.dbfilename {
-        server.with_dbfilename(&dbfilename);
+        server
+            .with_dbfilename(&dbfilename)
+            .with_context(|| format!("Failed to read {} db file", dbfilename))?;
     }
 
-    server.listen().unwrap();
+    server
+        .listen()
+        .await
+        .context("Failed to run the Redis server")?;
+
+    Ok(())
 }

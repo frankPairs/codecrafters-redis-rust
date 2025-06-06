@@ -1,5 +1,5 @@
-use std::{
-    io::{BufRead, BufReader},
+use tokio::{
+    io::{AsyncBufReadExt, BufReader},
     net::TcpStream,
 };
 
@@ -12,15 +12,14 @@ impl<'a> TcpStreamReader<'a> {
         TcpStreamReader { stream }
     }
 
-    pub fn read(&mut self) -> String {
+    pub async fn read(&mut self) -> anyhow::Result<String> {
         let mut reader = BufReader::new(&mut self.stream);
-        let bytes_received = reader
+        let buf = reader
             .fill_buf()
+            .await
             .expect("An error ocurred while reading from stream")
             .to_vec();
 
-        reader.consume(bytes_received.len());
-
-        String::from_utf8_lossy(&bytes_received).to_string()
+        Ok(String::from_utf8_lossy(&buf).to_string())
     }
 }

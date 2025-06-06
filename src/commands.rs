@@ -1,6 +1,6 @@
-use std::io::{self, Write};
-use std::net::TcpStream;
 use std::sync::{Arc, Mutex};
+use tokio::io::{self, AsyncWriteExt};
+use tokio::net::TcpStream;
 
 use chrono::{DateTime, Duration, Utc};
 
@@ -47,12 +47,18 @@ impl std::fmt::Display for CommandError {
     }
 }
 
-pub struct CommandBuilder {
+impl std::error::Error for CommandError {}
+
+pub struct CommandWriter<'a> {
     args: Vec<String>,
+    stream: &'a mut TcpStream,
 }
 
-impl CommandBuilder {
-    pub fn from_resp_data_type(value: RespDataType) -> Result<CommandBuilder, CommandError> {
+impl<'a> CommandWriter<'a> {
+    pub fn from_resp_data_type(
+        value: RespDataType,
+        stream: &'a mut TcpStream,
+    ) -> Result<CommandWriter<'a>, CommandError> {
         match value {
             RespDataType::Array(values) => {
                 let str_values = values
@@ -63,7 +69,10 @@ impl CommandBuilder {
                     })
                     .collect::<Vec<String>>();
 
-                Ok(CommandBuilder { args: str_values })
+                Ok(CommandWriter {
+                    args: str_values,
+                    stream,
+                })
             }
             _ => Err(CommandError::InvalidCommand(String::from(
                 "Command must be an array",
@@ -71,14 +80,14 @@ impl CommandBuilder {
         }
     }
 
-    pub fn build(
-        &self,
+    pub async fn write(
+        self,
         store: Arc<Mutex<Store>>,
         server_config: Arc<ServerConfig>,
-    ) -> Result<Box<dyn Command>, CommandError> {
+    ) -> Result<(), CommandError> {
         let command_name = self.get_command_name().ok_or(CommandError::EmptyCommand)?;
 
-        match command_name.to_uppercase() {
+        let command: Result<Box<dyn Command>, CommandError> = match command_name.to_uppercase() {
             name if name.starts_with("PING") => Ok(Box::new(PingCommand)),
             name if name.starts_with("ECHO") => Ok(Box::new(EchoCommand::new(self.args.clone()))),
             name if name.starts_with("SET") => {
@@ -94,7 +103,14 @@ impl CommandBuilder {
             _ => Err(CommandError::InvalidCommand(
                 "Command does not exists".to_string(),
             )),
-        }
+        };
+
+        let buf = command?.generate_reply()?;
+
+        self.stream
+            .write_all(buf.as_bytes())
+            .await
+            .map_err(CommandError::Reply)
     }
 
     /// The first (and sometimes also the second) bulk string in the array is the command's name.
@@ -113,14 +129,6 @@ impl CommandBuilder {
 
 pub trait Command {
     fn generate_reply(&self) -> Result<String, CommandError>;
-
-    fn reply(&self, stream: &mut TcpStream) -> Result<(), CommandError> {
-        let buf = self.generate_reply()?;
-
-        stream
-            .write_all(buf.as_bytes())
-            .map_err(CommandError::Reply)
-    }
 }
 
 #[derive(Debug)]
@@ -330,7 +338,7 @@ impl Command for ConfigGetCommand {
         match config_value {
             Some(value) => Ok(RespEncoder::encode(RespDataType::Array(vec![
                 RespDataType::BulkString(config_key.to_string()),
-                RespDataType::BulkString(value),
+                RespDataType::BulkString(value.to_string_lossy().to_string()),
             ]))),
             None => Ok(RespEncoder::encode(RespDataType::NullBulkString)),
         }

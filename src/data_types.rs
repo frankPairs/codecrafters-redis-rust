@@ -22,6 +22,8 @@ impl std::fmt::Display for RespDecoderError {
     }
 }
 
+impl std::error::Error for RespDecoderError {}
+
 pub struct RespDecoder;
 
 impl RespDecoder {
