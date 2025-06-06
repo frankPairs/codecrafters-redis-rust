@@ -107,10 +107,7 @@ impl Server {
                         .await
                         .expect("Error when reading from TCPStream");
 
-                    println!("message = {}", message);
-
                     if message.is_empty() {
-                        println!("message is empty");
                         break;
                     }
 
