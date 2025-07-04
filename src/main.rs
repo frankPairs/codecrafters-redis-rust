@@ -1,9 +1,7 @@
 use anyhow::Context;
-// use tokio::fs::File;
 
 use clap::Parser;
 
-// use codecrafters_redis::rdb_decoder::RdbFileDecoder;
 use codecrafters_redis::server::Server;
 
 #[derive(Parser, Debug)]
@@ -20,10 +18,6 @@ struct Args {
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     let cli_args = Args::parse();
-    // let file = File::open("dump.rdb")
-    //     .await
-    //     .context("Failed to read RDB backup file")?;
-    // let content = RdbFileDecoder::decode(file).expect("Error when decoding RDB file data");
 
     let mut server = Server::new("127.0.0.1:6379");
 

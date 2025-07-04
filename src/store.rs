@@ -8,16 +8,16 @@ pub struct StoreValue {
     pub exp: Option<DateTime<Utc>>,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Default)]
 pub struct StoreValueBuilder {
-    pub value: String,
+    pub value: Option<String>,
     pub exp: Option<DateTime<Utc>>,
 }
 
 impl StoreValueBuilder {
-    pub fn new(value: &str) -> Self {
+    pub fn new() -> Self {
         StoreValueBuilder {
-            value: value.to_string(),
+            value: None,
             exp: None,
         }
     }
@@ -26,9 +26,13 @@ impl StoreValueBuilder {
         self.exp = Some(exp);
     }
 
+    pub fn with_value(&mut self, value: &str) {
+        self.value = Some(value.to_string());
+    }
+
     pub fn build(self) -> StoreValue {
         StoreValue {
-            value: self.value,
+            value: self.value.unwrap(),
             exp: self.exp,
         }
     }
@@ -46,5 +50,15 @@ impl Store {
 
     pub fn get(&self, key: &str) -> Option<&StoreValue> {
         self.data.get(key)
+    }
+
+    pub fn get_all_keys(&self) -> Vec<String> {
+        let mut keys: Vec<String> = Vec::new();
+
+        for key in self.data.keys() {
+            keys.push(key.clone());
+        }
+
+        keys
     }
 }

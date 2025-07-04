@@ -6,10 +6,10 @@ use std::{
 };
 use tokio::net::TcpListener;
 
-use crate::commands::CommandWriter;
 use crate::data_types::RespDecoder;
 use crate::store::Store;
 use crate::tcp::TcpStreamReader;
+use crate::{commands::CommandWriter, rdb::sync::RdbSync};
 
 #[derive(Debug)]
 pub enum ServerError {
@@ -17,6 +17,7 @@ pub enum ServerError {
     TcpReader(String),
     InvalidPath(String),
     InvalidCommand(String),
+    RdbSync(String),
 }
 
 impl std::fmt::Display for ServerError {
@@ -26,6 +27,7 @@ impl std::fmt::Display for ServerError {
             ServerError::InvalidPath(err) => write!(f, "InvalidPath Error: {}", err),
             ServerError::TcpReader(err) => write!(f, "TcpReader Error: {}", err),
             ServerError::InvalidCommand(err) => write!(f, "InvalidCommand Error: {}", err),
+            ServerError::RdbSync(err) => write!(f, "RdbSync Error: {}", err),
         }
     }
 }
@@ -38,6 +40,19 @@ pub struct ServerConfig {
     pub dir: Option<PathBuf>,
     /// The name of the RDB file (example: rdbfile)
     pub dbfilename: Option<PathBuf>,
+}
+
+impl ServerConfig {
+    fn get_rdb_path(&self) -> Option<PathBuf> {
+        let mut rdb_path = PathBuf::new();
+        let dir = self.dir.clone()?;
+        let dbfilename = self.dbfilename.clone()?;
+
+        rdb_path.push(dir);
+        rdb_path.push(dbfilename);
+
+        Some(rdb_path)
+    }
 }
 
 #[derive(Debug)]
@@ -87,6 +102,15 @@ impl Server {
                 ))
             })?;
         let config = Arc::new(self.config);
+
+        if let Some(rdb_path) = config.get_rdb_path() {
+            let mut rdb_sync = RdbSync::new(self.store.clone());
+
+            rdb_sync
+                .sync(rdb_path)
+                .await
+                .map_err(|err| ServerError::RdbSync(err.to_string()))?;
+        }
 
         loop {
             let (mut socket, _) = listener.accept().await.map_err(|_| {

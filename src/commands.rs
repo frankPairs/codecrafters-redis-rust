@@ -100,6 +100,9 @@ impl<'a> CommandWriter<'a> {
                 self.args.clone(),
                 server_config,
             ))),
+            name if name.starts_with("KEYS") => {
+                Ok(Box::new(KeysCommand::new(self.args.clone(), store)))
+            }
             _ => Err(CommandError::InvalidCommand(
                 "Command does not exists".to_string(),
             )),
@@ -158,6 +161,8 @@ impl Command for EchoCommand {
         let arg = self.args.get(1).ok_or(CommandError::InvalidFormat(
             "ECHO command is missing a value".to_string(),
         ))?;
+
+        println!("arg = {}", arg);
 
         Ok(RespEncoder::encode(RespDataType::BulkString(
             arg.to_string(),
@@ -234,7 +239,10 @@ impl Command for SetCommand {
 
         let args: Vec<String> = args.cloned().collect();
 
-        let mut store_value_builder = StoreValueBuilder::new(value);
+        let mut store_value_builder = StoreValueBuilder::new();
+
+        store_value_builder.with_value(value);
+
         let options = SetCommandOptionParser::parse(args)?;
 
         for option in options {
@@ -341,6 +349,45 @@ impl Command for ConfigGetCommand {
                 RespDataType::BulkString(value.to_string_lossy().to_string()),
             ]))),
             None => Ok(RespEncoder::encode(RespDataType::NullBulkString)),
+        }
+    }
+}
+
+#[derive(Debug)]
+struct KeysCommand {
+    args: Vec<String>,
+    store: Arc<Mutex<Store>>,
+}
+
+impl KeysCommand {
+    fn new(args: Vec<String>, store: Arc<Mutex<Store>>) -> Self {
+        Self { args, store }
+    }
+}
+
+impl Command for KeysCommand {
+    fn generate_reply(&self) -> Result<String, CommandError> {
+        let pattern = self.args.get(1).ok_or(CommandError::InvalidFormat(
+            "Args command is missing a value".to_string(),
+        ))?;
+
+        println!("args = {:?}", self.args);
+
+        match pattern.as_str() {
+            "*" => {
+                let store = self.store.lock().map_err(|_| {
+                    CommandError::Store("Error when trying lock store for getting keys".to_string())
+                })?;
+
+                let keys = store.get_all_keys();
+
+                Ok(RespEncoder::encode(RespDataType::Array(
+                    keys.into_iter().map(RespDataType::BulkString).collect(),
+                )))
+            }
+            _ => {
+                unimplemented!("At the moment, keys only supports * as argument");
+            }
         }
     }
 }
