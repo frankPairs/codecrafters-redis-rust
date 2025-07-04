@@ -371,8 +371,6 @@ impl Command for KeysCommand {
             "Args command is missing a value".to_string(),
         ))?;
 
-        println!("args = {:?}", self.args);
-
         match pattern.as_str() {
             "*" => {
                 let store = self.store.lock().map_err(|_| {
