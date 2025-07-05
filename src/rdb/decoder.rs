@@ -250,14 +250,16 @@ impl RdbFileReader {
     async fn read_exact(&mut self, number_of_bytes: usize) -> Result<Vec<u8>, RdbFileDecoderError> {
         let mut buf = BytesMut::with_capacity(number_of_bytes - self.buffer.len());
 
-        buf.put(self.buffer.clone());
+        if !self.buffer.is_empty() {
+            buf.put(self.buffer.clone());
+        }
 
         self.file
             .read_buf(&mut buf)
             .await
             .map_err(|err| RdbFileDecoderError::ReadFile(err.to_string()))?;
 
-        self.buffer.clear();
+        self.clear_buf();
 
         Ok(buf.to_vec())
     }
@@ -286,6 +288,10 @@ impl RdbFileReader {
     // that byte as it will be necessary for the next read.
     fn write_byte_to_buf(&mut self, byte: u8) {
         self.buffer.put_u8(byte);
+    }
+
+    fn clear_buf(&mut self) {
+        self.buffer.clear();
     }
 }
 
@@ -517,28 +523,20 @@ impl<'a> DatabasesDecoder<'a> {
 
     async fn decode_expire_timestamp_in_seconds(&mut self) -> Result<u32, RdbFileDecoderError> {
         let buf = self.rdb_decoder.reader.read_exact(4).await?;
-        let buf: [u8; 4] = buf.try_into().map_err(|_| {
-            RdbFileDecoderError::InvalidArrayConversion(String::from(
-                "Array expected to have a length of 4",
-            ))
-        })?;
 
-        let timestamp_in_seconds = u32::from_le_bytes(buf);
+        let timestamp_in_seconds = u32::from_le_bytes([buf[0], buf[1], buf[2], buf[3]]);
 
         Ok(timestamp_in_seconds)
     }
 
     async fn decode_expire_timestamp_in_miliseconds(&mut self) -> Result<u64, RdbFileDecoderError> {
         let buf = self.rdb_decoder.reader.read_exact(8).await?;
-        let buf: [u8; 8] = buf.try_into().map_err(|_| {
-            RdbFileDecoderError::InvalidArrayConversion(String::from(
-                "Array expected to have a length of 8",
-            ))
-        })?;
 
-        let timestamp_in_seconds = u64::from_le_bytes(buf);
+        let timestamp_in_miliseconds = u64::from_le_bytes([
+            buf[0], buf[1], buf[2], buf[3], buf[4], buf[5], buf[6], buf[7],
+        ]);
 
-        Ok(timestamp_in_seconds)
+        Ok(timestamp_in_miliseconds)
     }
 
     async fn decode_db_key_value_pairs(
@@ -562,46 +560,57 @@ impl<'a> DatabasesDecoder<'a> {
     }
 
     async fn decode_db_store_value(&mut self) -> Result<(String, StoreValue), RdbFileDecoderError> {
-        let byte = self.rdb_decoder.reader.read_u8().await?;
         let mut store_value_builder = StoreValueBuilder::new();
         let mut key = String::new();
 
-        match format!("{:X}", byte).as_str() {
-            // Expire timestamp information in miliseconds
-            "FC" => {
-                let expire_timestamp_in_milis =
-                    self.decode_expire_timestamp_in_miliseconds().await?;
-                let expire_timestamp_in_milis = i64::try_from(expire_timestamp_in_milis)
-                    .map_err(RdbFileDecoderError::InvalidExpirationConversion)?;
+        loop {
+            let byte = self.rdb_decoder.reader.read_u8().await?;
 
-                let exp = DateTime::from_timestamp_millis(expire_timestamp_in_milis);
+            match format!("{:X}", byte).as_str() {
+                // Expire timestamp information in miliseconds
+                "FC" => {
+                    self.rdb_decoder.reader.clear_buf();
 
-                if let Some(exp) = exp {
-                    store_value_builder.with_exp(exp);
+                    let expire_timestamp_in_milis =
+                        self.decode_expire_timestamp_in_miliseconds().await?;
+
+                    let expire_timestamp_in_milis = i64::try_from(expire_timestamp_in_milis)
+                        .map_err(RdbFileDecoderError::InvalidExpirationConversion)?;
+
+                    let exp = DateTime::from_timestamp_millis(expire_timestamp_in_milis);
+
+                    if let Some(exp) = exp {
+                        store_value_builder.with_exp(exp);
+                    }
                 }
-            }
-            // Expire timestamp information in seconds
-            "FD" => {
-                let expire_timestamp_in_seconds = self.decode_expire_timestamp_in_seconds().await?;
-                let expire_timestamp_in_seconds = i32::try_from(expire_timestamp_in_seconds)
-                    .map_err(RdbFileDecoderError::InvalidExpirationConversion)?;
+                // Expire timestamp information in seconds
+                "FD" => {
+                    self.rdb_decoder.reader.clear_buf();
 
-                let exp = DateTime::from_timestamp(expire_timestamp_in_seconds.into(), 0);
+                    let expire_timestamp_in_seconds =
+                        self.decode_expire_timestamp_in_seconds().await?;
+                    let expire_timestamp_in_seconds = i32::try_from(expire_timestamp_in_seconds)
+                        .map_err(RdbFileDecoderError::InvalidExpirationConversion)?;
 
-                if let Some(exp) = exp {
-                    store_value_builder.with_exp(exp);
+                    let exp = DateTime::from_timestamp(expire_timestamp_in_seconds.into(), 0);
+
+                    if let Some(exp) = exp {
+                        store_value_builder.with_exp(exp);
+                    }
                 }
-            }
-            _ => {
-                self.rdb_decoder.reader.write_byte_to_buf(byte);
+                _ => {
+                    self.rdb_decoder.reader.write_byte_to_buf(byte);
 
-                let db_value = self.decode_db_key_value_pairs().await?;
+                    let db_value = self.decode_db_key_value_pairs().await?;
 
-                if let Some(value) = db_value.1 {
-                    store_value_builder.with_value(&value);
+                    if let Some(value) = db_value.clone().1 {
+                        store_value_builder.with_value(&value);
+                    }
+
+                    key = db_value.0;
+
+                    break;
                 }
-
-                key = db_value.0;
             }
         }
 
@@ -712,7 +721,9 @@ impl<'a> StringDecoder<'a> {
                 "C0" => {
                     let byte = self.rdb_decoder.reader.read_u8().await?;
 
-                    Ok(byte.to_string())
+                    let number = u8::from_le_bytes([byte]);
+
+                    Ok(number.to_string())
                 }
                 // The 0xC1 size indicates the string is a 16-bit integer.
                 "C1" => {
@@ -725,13 +736,8 @@ impl<'a> StringDecoder<'a> {
                 // The 0xC2 size indicates the string is a 32-bit integer.
                 "C2" => {
                     let buf = self.rdb_decoder.reader.read_exact(4).await?;
-                    let buf: [u8; 4] = buf.try_into().map_err(|_| {
-                        RdbFileDecoderError::InvalidArrayConversion(String::from(
-                            "Array expected to have a length of 4",
-                        ))
-                    })?;
 
-                    let number = u32::from_le_bytes(buf);
+                    let number = u32::from_le_bytes([buf[0], buf[1], buf[2], buf[3]]);
 
                     Ok(number.to_string())
                 }
