@@ -561,7 +561,7 @@ impl<'a> DatabasesDecoder<'a> {
 
     async fn decode_db_store_value(&mut self) -> Result<(String, StoreValue), RdbFileDecoderError> {
         let mut store_value_builder = StoreValueBuilder::new();
-        let mut key = String::new();
+        let key: String;
 
         loop {
             let byte = self.rdb_decoder.reader.read_u8().await?;
