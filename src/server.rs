@@ -1,3 +1,4 @@
+use std::net::SocketAddr;
 use std::{
     error::Error,
     path::PathBuf,
@@ -57,15 +58,15 @@ impl ServerConfig {
 
 #[derive(Debug)]
 pub struct Server {
-    address: String,
+    address: SocketAddr,
     store: Arc<Mutex<Store>>,
     config: ServerConfig,
 }
 
 impl Server {
-    pub fn new(address: &str) -> Self {
+    pub fn new(address: SocketAddr) -> Self {
         Self {
-            address: address.to_string(),
+            address,
             config: ServerConfig {
                 dir: None,
                 dbfilename: None,
@@ -93,14 +94,9 @@ impl Server {
     }
 
     pub async fn listen(self) -> Result<(), ServerError> {
-        let listener = TcpListener::bind(self.address.as_str())
-            .await
-            .map_err(|_| {
-                ServerError::TcpListener(format!(
-                    "Connection with {} could not be established",
-                    self.address
-                ))
-            })?;
+        let listener = TcpListener::bind(self.address).await.map_err(|_| {
+            ServerError::TcpListener("Connection could not be established".to_string())
+        })?;
         let config = Arc::new(self.config);
 
         if let Some(rdb_path) = config.get_rdb_path() {
@@ -114,10 +110,7 @@ impl Server {
 
         loop {
             let (mut socket, _) = listener.accept().await.map_err(|_| {
-                ServerError::TcpListener(format!(
-                    "Connection with {} could not be established",
-                    self.address
-                ))
+                ServerError::TcpListener("Connection with could not be established".to_string())
             })?;
 
             let store_cloned = self.store.clone();
