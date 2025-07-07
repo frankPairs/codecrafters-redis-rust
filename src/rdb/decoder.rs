@@ -24,18 +24,18 @@ impl RdbValueType {
 
 #[derive(Debug)]
 enum RdbSection {
-    METADATA,
-    DATABASE,
-    HEADER,
-    END_OF_FILE,
+    Metadata,
+    Database,
+    Header,
+    EndOfFile,
 }
 
 impl RdbSection {
     fn from_byte(byte: u8) -> Option<RdbSection> {
         match format!("{:X}", byte).as_str() {
-            "FA" => Some(RdbSection::METADATA),
-            "FE" => Some(RdbSection::DATABASE),
-            "FF" => Some(RdbSection::END_OF_FILE),
+            "FA" => Some(RdbSection::Metadata),
+            "FE" => Some(RdbSection::Database),
+            "FF" => Some(RdbSection::EndOfFile),
             _ => None,
         }
     }
@@ -112,17 +112,13 @@ impl RdbDataDatabases {
 #[derive(Debug)]
 pub struct RdbDatabase {
     pub index: usize,
-    number_of_keys: Size,
-    number_of_expired_keys: Size,
     pub data: HashMap<String, StoreValue>,
 }
 
 impl RdbDatabase {
-    fn new(index: usize, number_of_keys: Size, number_of_expired_keys: Size) -> Self {
+    fn new(index: usize) -> Self {
         Self {
             index,
-            number_of_keys,
-            number_of_expired_keys,
             data: HashMap::new(),
         }
     }
@@ -305,7 +301,7 @@ impl RdbFileDecoder {
         Self {
             reader: RdbFileReader::new(file),
             // We assume that the first section of the .rdb file is going to be the header
-            current_section: RdbSection::HEADER,
+            current_section: RdbSection::Header,
         }
     }
 
@@ -314,26 +310,28 @@ impl RdbFileDecoder {
 
         loop {
             match self.current_section {
-                RdbSection::HEADER => {
+                RdbSection::Header => {
                     let header_decoder = HeaderDecoder::new(self);
                     let header = header_decoder.decode().await?;
 
                     builder.with_header(header);
-                    self.current_section = RdbSection::METADATA;
+                    self.current_section = RdbSection::Metadata;
                 }
-                RdbSection::METADATA => {
+                RdbSection::Metadata => {
                     let metadata_decoder = MetadataDecoder::new(self);
                     let metadata = metadata_decoder.decode().await?;
 
                     builder.with_metadata(metadata);
                 }
-                RdbSection::DATABASE => {
+                RdbSection::Database => {
                     let databases_decoder = DatabasesDecoder::new(self);
                     let databases = databases_decoder.decode().await?;
 
                     builder.with_databases(databases);
                 }
-                _ => break,
+                RdbSection::EndOfFile => {
+                    break;
+                }
             };
         }
 
@@ -349,7 +347,7 @@ struct HeaderDecoder<'a> {
 
 impl<'a> HeaderDecoder<'a> {
     pub fn new(rdb_decoder: &'a mut RdbFileDecoder) -> HeaderDecoder<'a> {
-        rdb_decoder.current_section = RdbSection::HEADER;
+        rdb_decoder.current_section = RdbSection::Header;
 
         HeaderDecoder { rdb_decoder }
     }
@@ -384,7 +382,7 @@ struct MetadataDecoder<'a> {
 
 impl<'a> MetadataDecoder<'a> {
     pub fn new(rdb_decoder: &'a mut RdbFileDecoder) -> MetadataDecoder<'a> {
-        rdb_decoder.current_section = RdbSection::METADATA;
+        rdb_decoder.current_section = RdbSection::Metadata;
 
         MetadataDecoder { rdb_decoder }
     }
@@ -400,7 +398,7 @@ impl<'a> MetadataDecoder<'a> {
             //
             // We also set the rdb file decoder section.
             if let Some(section) = RdbSection::from_byte(byte) {
-                if !matches!(section, RdbSection::METADATA) {
+                if !matches!(section, RdbSection::Metadata) {
                     self.rdb_decoder.current_section = section;
 
                     break;
@@ -431,7 +429,7 @@ struct DatabasesDecoder<'a> {
 
 impl<'a> DatabasesDecoder<'a> {
     pub fn new(rdb_decoder: &'a mut RdbFileDecoder) -> DatabasesDecoder<'a> {
-        rdb_decoder.current_section = RdbSection::DATABASE;
+        rdb_decoder.current_section = RdbSection::Database;
 
         DatabasesDecoder { rdb_decoder }
     }
@@ -447,7 +445,7 @@ impl<'a> DatabasesDecoder<'a> {
             //
             // We also set the rdb file decoder section.
             if let Some(section) = RdbSection::from_byte(byte) {
-                if !matches!(section, RdbSection::DATABASE) {
+                if !matches!(section, RdbSection::Database) {
                     self.rdb_decoder.current_section = section;
 
                     break;
@@ -472,10 +470,9 @@ impl<'a> DatabasesDecoder<'a> {
 
         match db_index {
             Size::Length(index) => {
-                let (number_of_keys, number_of_expired_keys) =
-                    self.decode_size_information().await?;
+                self.decode_size_information().await?;
 
-                let mut database = RdbDatabase::new(index, number_of_keys, number_of_expired_keys);
+                let mut database = RdbDatabase::new(index);
 
                 // Get database values
                 loop {

@@ -1,3 +1,4 @@
+use std::str::FromStr;
 use std::sync::{Arc, Mutex};
 use tokio::io::{self, AsyncWriteExt};
 use tokio::net::TcpStream;
@@ -14,6 +15,7 @@ pub enum CommandError {
     InvalidFormat(String),
     InvalidCommandOptionName(String),
     InvalidCommandOptionValue(String),
+    InvalidInfoArg(String),
     EmptyCommand,
     Store(String),
     Reply(io::Error),
@@ -42,6 +44,9 @@ impl std::fmt::Display for CommandError {
             }
             CommandError::Store(err) => {
                 write!(f, "Store error: {}", err)
+            }
+            CommandError::InvalidInfoArg(err) => {
+                write!(f, "Invalid Info Arg error: {}", err)
             }
         }
     }
@@ -103,6 +108,7 @@ impl<'a> CommandWriter<'a> {
             name if name.starts_with("KEYS") => {
                 Ok(Box::new(KeysCommand::new(self.args.clone(), store)))
             }
+            name if name.starts_with("INFO") => Ok(Box::new(InfoCommand::new(self.args.clone()))),
             _ => Err(CommandError::InvalidCommand(
                 "Command does not exists".to_string(),
             )),
@@ -381,6 +387,90 @@ impl Command for KeysCommand {
 
                 Ok(RespEncoder::encode(RespDataType::Array(
                     keys.into_iter().map(RespDataType::BulkString).collect(),
+                )))
+            }
+            _ => {
+                unimplemented!("At the moment, keys only supports * as argument");
+            }
+        }
+    }
+}
+
+#[derive(Debug)]
+enum InfoSection {
+    Replication,
+}
+
+impl FromStr for InfoSection {
+    type Err = CommandError;
+
+    fn from_str(arg: &str) -> Result<Self, Self::Err> {
+        match arg {
+            "replication" => Ok(InfoSection::Replication),
+            value => Err(CommandError::InvalidInfoArg(format!(
+                "Info section {} is not supported",
+                value
+            ))),
+        }
+    }
+}
+
+#[derive(Debug)]
+enum InfoRole {
+    Slave,
+    Master,
+}
+
+impl std::fmt::Display for InfoRole {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            InfoRole::Master => write!(f, "master"),
+            InfoRole::Slave => write!(f, "slave"),
+        }
+    }
+}
+
+#[derive(Debug)]
+struct Info {
+    role: InfoRole,
+}
+
+impl std::fmt::Display for Info {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let mut info_stringify = String::new();
+
+        info_stringify.push_str(format!("{}:{}\n", "role", self.role).as_str());
+
+        write!(f, "{}", info_stringify)
+    }
+}
+
+#[derive(Debug)]
+struct InfoCommand {
+    args: Vec<String>,
+}
+
+impl InfoCommand {
+    fn new(args: Vec<String>) -> Self {
+        Self { args }
+    }
+}
+
+impl Command for InfoCommand {
+    fn generate_reply(&self) -> Result<String, CommandError> {
+        let section_name = self.args.get(1).ok_or(CommandError::InvalidFormat(
+            "Section name is missing".to_string(),
+        ))?;
+        let section = InfoSection::from_str(section_name.as_str())?;
+
+        match section {
+            InfoSection::Replication => {
+                let info = Info {
+                    role: InfoRole::Master,
+                };
+
+                Ok(RespEncoder::encode(RespDataType::BulkString(
+                    info.to_string(),
                 )))
             }
             _ => {
