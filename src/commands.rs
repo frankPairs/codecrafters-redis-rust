@@ -6,7 +6,7 @@ use tokio::net::TcpStream;
 use chrono::{DateTime, Duration, Utc};
 
 use crate::data_types::{RespDataType, RespEncoder};
-use crate::server::ServerConfig;
+use crate::server::{ServerConfig, ServerRole};
 use crate::store::{Store, StoreValueBuilder};
 
 #[derive(Debug)]
@@ -108,7 +108,9 @@ impl<'a> CommandWriter<'a> {
             name if name.starts_with("KEYS") => {
                 Ok(Box::new(KeysCommand::new(self.args.clone(), store)))
             }
-            name if name.starts_with("INFO") => Ok(Box::new(InfoCommand::new(self.args.clone()))),
+            name if name.starts_with("INFO") => {
+                Ok(Box::new(InfoCommand::new(self.args.clone(), server_config)))
+            }
             _ => Err(CommandError::InvalidCommand(
                 "Command does not exists".to_string(),
             )),
@@ -416,23 +418,8 @@ impl FromStr for InfoSection {
 }
 
 #[derive(Debug)]
-enum InfoRole {
-    Slave,
-    Master,
-}
-
-impl std::fmt::Display for InfoRole {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            InfoRole::Master => write!(f, "master"),
-            InfoRole::Slave => write!(f, "slave"),
-        }
-    }
-}
-
-#[derive(Debug)]
 struct Info {
-    role: InfoRole,
+    role: ServerRole,
 }
 
 impl std::fmt::Display for Info {
@@ -448,11 +435,12 @@ impl std::fmt::Display for Info {
 #[derive(Debug)]
 struct InfoCommand {
     args: Vec<String>,
+    config: Arc<ServerConfig>,
 }
 
 impl InfoCommand {
-    fn new(args: Vec<String>) -> Self {
-        Self { args }
+    fn new(args: Vec<String>, config: Arc<ServerConfig>) -> Self {
+        Self { args, config }
     }
 }
 
@@ -466,7 +454,7 @@ impl Command for InfoCommand {
         match section {
             InfoSection::Replication => {
                 let info = Info {
-                    role: InfoRole::Master,
+                    role: self.config.role,
                 };
 
                 Ok(RespEncoder::encode(RespDataType::BulkString(

@@ -35,12 +35,28 @@ impl std::fmt::Display for ServerError {
 
 impl Error for ServerError {}
 
+#[derive(Debug, Clone, Copy)]
+pub enum ServerRole {
+    Slave(SocketAddr),
+    Master,
+}
+
+impl std::fmt::Display for ServerRole {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            ServerRole::Master => write!(f, "master"),
+            ServerRole::Slave(_) => write!(f, "slave"),
+        }
+    }
+}
+
 #[derive(Debug)]
 pub struct ServerConfig {
     /// The path to the directory where the RDB file is stored (example: /tmp/redis-data)
     pub dir: Option<PathBuf>,
     /// The name of the RDB file (example: rdbfile)
     pub dbfilename: Option<PathBuf>,
+    pub role: ServerRole,
 }
 
 impl ServerConfig {
@@ -64,12 +80,13 @@ pub struct Server {
 }
 
 impl Server {
-    pub fn new(address: SocketAddr) -> Self {
+    pub fn new(address: SocketAddr, role: ServerRole) -> Self {
         Self {
             address,
             config: ServerConfig {
                 dir: None,
                 dbfilename: None,
+                role,
             },
             store: Arc::new(Mutex::new(Store::default())),
         }
@@ -106,6 +123,19 @@ impl Server {
                 .sync(rdb_path)
                 .await
                 .map_err(|err| ServerError::RdbSync(err.to_string()))?;
+        }
+
+        if let ServerRole::Slave(replica_addr) = config.role {
+            tokio::spawn(async move {
+                let replica_listener = TcpListener::bind(replica_addr)
+                    .await
+                    .expect("Replica connection could not be established");
+
+                let (_, _) = replica_listener
+                    .accept()
+                    .await
+                    .expect("Replica connection could not be established");
+            });
         }
 
         loop {
