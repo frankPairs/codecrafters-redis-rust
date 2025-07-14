@@ -56,7 +56,6 @@ pub struct ServerConfig {
     pub dir: Option<PathBuf>,
     /// The name of the RDB file (example: rdbfile)
     pub dbfilename: Option<PathBuf>,
-    pub role: ServerRole,
 }
 
 impl ServerConfig {
@@ -73,20 +72,32 @@ impl ServerConfig {
 }
 
 #[derive(Debug)]
-pub struct Server {
+pub struct ServerInfo {
     address: SocketAddr,
+    pub role: ServerRole,
+    pub id: String,
+    pub offset: u32,
+}
+
+#[derive(Debug)]
+pub struct Server {
     store: Arc<Mutex<Store>>,
     config: ServerConfig,
+    info: ServerInfo,
 }
 
 impl Server {
     pub fn new(address: SocketAddr, role: ServerRole) -> Self {
         Self {
-            address,
             config: ServerConfig {
                 dir: None,
                 dbfilename: None,
+            },
+            info: ServerInfo {
+                address,
                 role,
+                id: String::from("8371b4fb1155b71f4a04d3e1bc3e18c4a990aeeb"),
+                offset: 0,
             },
             store: Arc::new(Mutex::new(Store::default())),
         }
@@ -111,10 +122,11 @@ impl Server {
     }
 
     pub async fn listen(self) -> Result<(), ServerError> {
-        let listener = TcpListener::bind(self.address).await.map_err(|_| {
+        let listener = TcpListener::bind(self.info.address).await.map_err(|_| {
             ServerError::TcpListener("Connection could not be established".to_string())
         })?;
         let config = Arc::new(self.config);
+        let info = Arc::new(self.info);
 
         if let Some(rdb_path) = config.get_rdb_path() {
             let mut rdb_sync = RdbSync::new(self.store.clone());
@@ -125,7 +137,7 @@ impl Server {
                 .map_err(|err| ServerError::RdbSync(err.to_string()))?;
         }
 
-        if let ServerRole::Slave(replica_addr) = config.role {
+        if let ServerRole::Slave(replica_addr) = info.role {
             tokio::spawn(async move {
                 let replica_listener = TcpListener::bind(replica_addr)
                     .await
@@ -145,6 +157,7 @@ impl Server {
 
             let store_cloned = self.store.clone();
             let config_cloned = config.clone();
+            let info_cloned = info.clone();
 
             tokio::spawn(async move {
                 loop {
@@ -165,7 +178,11 @@ impl Server {
 
                     CommandWriter::from_resp_data_type(resp_data_type, &mut socket)
                         .expect("Error when decoding a command")
-                        .write(store_cloned.clone(), config_cloned.clone())
+                        .write(
+                            store_cloned.clone(),
+                            config_cloned.clone(),
+                            info_cloned.clone(),
+                        )
                         .await
                         .expect("Invalid command")
                 }

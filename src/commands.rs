@@ -6,7 +6,7 @@ use tokio::net::TcpStream;
 use chrono::{DateTime, Duration, Utc};
 
 use crate::data_types::{RespDataType, RespEncoder};
-use crate::server::{ServerConfig, ServerRole};
+use crate::server::{ServerConfig, ServerInfo};
 use crate::store::{Store, StoreValueBuilder};
 
 #[derive(Debug)]
@@ -89,6 +89,7 @@ impl<'a> CommandWriter<'a> {
         self,
         store: Arc<Mutex<Store>>,
         server_config: Arc<ServerConfig>,
+        server_info: Arc<ServerInfo>,
     ) -> Result<(), CommandError> {
         let command_name = self.get_command_name().ok_or(CommandError::EmptyCommand)?;
 
@@ -109,7 +110,7 @@ impl<'a> CommandWriter<'a> {
                 Ok(Box::new(KeysCommand::new(self.args.clone(), store)))
             }
             name if name.starts_with("INFO") => {
-                Ok(Box::new(InfoCommand::new(self.args.clone(), server_config)))
+                Ok(Box::new(InfoCommand::new(self.args.clone(), server_info)))
             }
             _ => Err(CommandError::InvalidCommand(
                 "Command does not exists".to_string(),
@@ -418,15 +419,24 @@ impl FromStr for InfoSection {
 }
 
 #[derive(Debug)]
-struct Info {
-    role: ServerRole,
+struct ServerInfoFormatter {
+    info: Arc<ServerInfo>,
 }
 
-impl std::fmt::Display for Info {
+impl ServerInfoFormatter {
+    fn new(info: Arc<ServerInfo>) -> Self {
+        Self { info }
+    }
+}
+
+impl std::fmt::Display for ServerInfoFormatter {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let mut info_stringify = String::new();
 
-        info_stringify.push_str(format!("{}:{}\n", "role", self.role).as_str());
+        info_stringify.push_str(format!("{}:{}\n", "role", self.info.role).as_str());
+        info_stringify.push_str(format!("{}:{}\n", "master_replid", self.info.id).as_str());
+        info_stringify
+            .push_str(format!("{}:{}\n", "master_repl_offset", self.info.offset).as_str());
 
         write!(f, "{}", info_stringify)
     }
@@ -435,12 +445,12 @@ impl std::fmt::Display for Info {
 #[derive(Debug)]
 struct InfoCommand {
     args: Vec<String>,
-    config: Arc<ServerConfig>,
+    info: Arc<ServerInfo>,
 }
 
 impl InfoCommand {
-    fn new(args: Vec<String>, config: Arc<ServerConfig>) -> Self {
-        Self { args, config }
+    fn new(args: Vec<String>, info: Arc<ServerInfo>) -> Self {
+        Self { args, info }
     }
 }
 
@@ -453,9 +463,7 @@ impl Command for InfoCommand {
 
         match section {
             InfoSection::Replication => {
-                let info = Info {
-                    role: self.config.role,
-                };
+                let info = ServerInfoFormatter::new(self.info.clone());
 
                 Ok(RespEncoder::encode(RespDataType::BulkString(
                     info.to_string(),
