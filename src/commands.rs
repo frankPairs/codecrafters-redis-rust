@@ -19,6 +19,7 @@ pub enum CommandError {
     EmptyCommand,
     Store(String),
     Reply(io::Error),
+    Request(io::Error),
 }
 
 impl std::fmt::Display for CommandError {
@@ -42,6 +43,9 @@ impl std::fmt::Display for CommandError {
             CommandError::Reply(err) => {
                 write!(f, "Command reply error: {}", err)
             }
+            CommandError::Request(err) => {
+                write!(f, "Command reply error: {}", err)
+            }
             CommandError::Store(err) => {
                 write!(f, "Store error: {}", err)
             }
@@ -60,6 +64,13 @@ pub struct CommandWriter<'a> {
 }
 
 impl<'a> CommandWriter<'a> {
+    pub fn new(stream: &'a mut TcpStream) -> Self {
+        Self {
+            args: Vec::new(),
+            stream,
+        }
+    }
+
     pub fn from_resp_data_type(
         value: RespDataType,
         stream: &'a mut TcpStream,
@@ -125,6 +136,15 @@ impl<'a> CommandWriter<'a> {
             .map_err(CommandError::Reply)
     }
 
+    pub async fn write_request(&mut self, command: Box<dyn Command>) -> Result<(), CommandError> {
+        let buf = command.generate_request()?;
+
+        self.stream
+            .write_all(buf.as_bytes())
+            .await
+            .map_err(CommandError::Reply)
+    }
+
     /// The first (and sometimes also the second) bulk string in the array is the command's name.
     fn get_command_name(&self) -> Option<String> {
         match self.args.len() {
@@ -139,18 +159,27 @@ impl<'a> CommandWriter<'a> {
     }
 }
 
-pub trait Command {
+pub trait Command: Send + Sync {
     fn generate_reply(&self) -> Result<String, CommandError>;
+    fn generate_request(&self) -> Result<String, CommandError> {
+        unimplemented!("This command does not implement a request");
+    }
 }
 
 #[derive(Debug)]
-struct PingCommand;
+pub struct PingCommand;
 
 impl Command for PingCommand {
     fn generate_reply(&self) -> Result<String, CommandError> {
         Ok(RespEncoder::encode(RespDataType::SimpleString(
             "PONG".to_string(),
         )))
+    }
+
+    fn generate_request(&self) -> Result<String, CommandError> {
+        Ok(RespEncoder::encode(RespDataType::Array(vec![
+            RespDataType::SimpleString("PING".to_string()),
+        ])))
     }
 }
 
@@ -170,8 +199,6 @@ impl Command for EchoCommand {
         let arg = self.args.get(1).ok_or(CommandError::InvalidFormat(
             "ECHO command is missing a value".to_string(),
         ))?;
-
-        println!("arg = {}", arg);
 
         Ok(RespEncoder::encode(RespDataType::BulkString(
             arg.to_string(),

@@ -1,4 +1,5 @@
 pub mod commands;
+pub mod connections;
 pub mod data_types;
 pub mod rdb;
 pub mod server;

@@ -7,6 +7,7 @@ use std::{
 };
 use tokio::net::TcpListener;
 
+use crate::connections::replica::ReplicaConnection;
 use crate::data_types::RespDecoder;
 use crate::store::Store;
 use crate::tcp::TcpStreamReader;
@@ -122,6 +123,8 @@ impl Server {
     }
 
     pub async fn listen(self) -> Result<(), ServerError> {
+        println!("Connecting to server on address {}", self.info.address);
+
         let listener = TcpListener::bind(self.info.address).await.map_err(|_| {
             ServerError::TcpListener("Connection could not be established".to_string())
         })?;
@@ -137,16 +140,11 @@ impl Server {
                 .map_err(|err| ServerError::RdbSync(err.to_string()))?;
         }
 
-        if let ServerRole::Slave(replica_addr) = info.role {
+        if let ServerRole::Slave(master_node_addr) = info.role {
             tokio::spawn(async move {
-                let replica_listener = TcpListener::bind(replica_addr)
-                    .await
-                    .expect("Replica connection could not be established");
+                let replica_connection = ReplicaConnection::new(master_node_addr);
 
-                let (_, _) = replica_listener
-                    .accept()
-                    .await
-                    .expect("Replica connection could not be established");
+                replica_connection.listen().await.unwrap();
             });
         }
 
