@@ -1,19 +1,21 @@
 use std::net::SocketAddr;
+use std::sync::Arc;
 use tokio::net::TcpStream;
 
-use crate::commands::{CommandWriter, PingCommand, PsyncCommand, ReplconfCommand};
+use crate::{
+    commands::{CommandWriter, PingCommand, PsyncCommand, ReplconfCommand},
+    server::ServerInfo,
+};
 
 pub struct ReplicaConnection {
-    replica_addr: SocketAddr,
+    // Represents the information of the current server, which is acting as a replica.
+    info: Arc<ServerInfo>,
     master_addr: SocketAddr,
 }
 
 impl ReplicaConnection {
-    pub fn new(replica_addr: SocketAddr, master_addr: SocketAddr) -> Self {
-        Self {
-            replica_addr,
-            master_addr,
-        }
+    pub fn new(info: Arc<ServerInfo>, master_addr: SocketAddr) -> Self {
+        Self { info, master_addr }
     }
 
     pub async fn listen(&self) -> anyhow::Result<()> {
@@ -36,7 +38,7 @@ impl ReplicaConnection {
             .write_request(Box::new(ReplconfCommand::new(vec![
                 String::from("REPLCONF"),
                 String::from("listening-port"),
-                self.replica_addr.port().to_string(),
+                self.info.address.port().to_string(),
             ])))
             .await?;
 
@@ -48,7 +50,9 @@ impl ReplicaConnection {
             ])))
             .await?;
 
-        writer.write_request(Box::new(PsyncCommand)).await?;
+        writer
+            .write_request(Box::new(PsyncCommand::new(self.info.clone())))
+            .await?;
 
         Ok(())
     }

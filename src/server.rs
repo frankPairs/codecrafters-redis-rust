@@ -125,7 +125,6 @@ impl Server {
         let listener = TcpListener::bind(self.info.address).await.map_err(|_| {
             ServerError::TcpListener("Connection could not be established".to_string())
         })?;
-        let replica_addr = self.info.address;
         let config = Arc::new(self.config);
         let info = Arc::new(self.info);
 
@@ -139,8 +138,10 @@ impl Server {
         }
 
         if let ServerRole::Slave(master_addr) = info.role {
+            let info_cloned = info.clone();
+
             tokio::spawn(async move {
-                let replica_connection = ReplicaConnection::new(replica_addr, master_addr);
+                let replica_connection = ReplicaConnection::new(info_cloned, master_addr);
 
                 replica_connection.listen().await.unwrap();
             });

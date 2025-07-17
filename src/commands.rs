@@ -127,6 +127,7 @@ impl<'a> CommandWriter<'a> {
             name if name.starts_with("REPLCONF") => {
                 Ok(Box::new(ReplconfCommand::new(self.args.clone())))
             }
+            name if name.starts_with("PSYNC") => Ok(Box::new(PsyncCommand::new(server_info))),
             _ => Err(CommandError::InvalidCommand(
                 "Command does not exists".to_string(),
             )),
@@ -553,11 +554,29 @@ impl Command for ReplconfCommand {
 }
 
 #[derive(Debug)]
-pub struct PsyncCommand;
+pub struct PsyncCommand {
+    info: Arc<ServerInfo>,
+}
+
+impl PsyncCommand {
+    pub fn new(info: Arc<ServerInfo>) -> Self {
+        Self { info }
+    }
+}
 
 impl Command for PsyncCommand {
+    // The master needs to respond with +FULLRESYNC <REPL_ID> 0\r\n ("FULLRESYNC 0" encoded as a RESP Simple String). Here's what the response means:
+    //
+    //  - FULLRESYNC means that the master cannot perform incremental replication with the replica, and will thus start a "full" resynchronization.
+    //  - <REPL_ID> is the replication ID of the master. You've already set this in the "Replication ID & Offset" stage.
+    //      - As an example, you can hardcode 8371b4fb1155b71f4a04d3e1bc3e18c4a990aeeb as the replication ID.
+    //  - 0 is the replication offset of the master.
+    //      - You've already set this in the "Replication ID & Offset" stage.
     fn generate_reply(&self) -> Result<String, CommandError> {
-        todo!("Implement a way reply to a PSYNC command,");
+        Ok(RespEncoder::encode(RespDataType::SimpleString(format!(
+            "FULLRESYNC {} {}",
+            self.info.id, self.info.offset
+        ))))
     }
 
     // The PSYNC command is used to synchronize the state of the replica with the master. The replica will send this command to the master with two arguments:
