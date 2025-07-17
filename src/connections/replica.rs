@@ -1,26 +1,51 @@
 use std::net::SocketAddr;
 use tokio::net::TcpStream;
 
-use crate::commands::{CommandWriter, PingCommand};
+use crate::{
+    commands::{CommandWriter, PingCommand, ReplconfCommand},
+    resp::reader::RespReader,
+};
 
 pub struct ReplicaConnection {
-    addr: SocketAddr,
+    replica_addr: SocketAddr,
+    master_addr: SocketAddr,
 }
 
 impl ReplicaConnection {
-    pub fn new(addr: SocketAddr) -> Self {
-        Self { addr }
+    pub fn new(replica_addr: SocketAddr, master_addr: SocketAddr) -> Self {
+        Self {
+            replica_addr,
+            master_addr,
+        }
     }
 
     pub async fn listen(&self) -> anyhow::Result<()> {
-        let mut stream = TcpStream::connect(self.addr)
+        let mut stream = TcpStream::connect(self.master_addr)
             .await
             .expect("Replica listener could not be established");
 
-        let mut writer = CommandWriter::new(&mut stream);
-
         // Init handshake process
+        self.write_handshake(&mut stream).await?;
+
+        Ok(())
+    }
+
+    async fn write_handshake(&self, stream: &mut TcpStream) -> anyhow::Result<()> {
+        let mut writer = CommandWriter::new(stream);
+
         writer.write_request(Box::new(PingCommand)).await?;
+
+        writer
+            .write_request(Box::new(ReplconfCommand::new(
+                crate::commands::ReplconfCommandArg::ListeningPort(self.replica_addr.port()),
+            )))
+            .await?;
+
+        writer
+            .write_request(Box::new(ReplconfCommand::new(
+                crate::commands::ReplconfCommandArg::Capa(String::from("psync2")),
+            )))
+            .await?;
 
         Ok(())
     }

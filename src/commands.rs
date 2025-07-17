@@ -5,7 +5,8 @@ use tokio::net::TcpStream;
 
 use chrono::{DateTime, Duration, Utc};
 
-use crate::data_types::{RespDataType, RespEncoder};
+use crate::resp::data_types::{RespDataType, RespEncoder};
+use crate::resp::reader::RespReader;
 use crate::server::{ServerConfig, ServerInfo};
 use crate::store::{Store, StoreValueBuilder};
 
@@ -18,7 +19,7 @@ pub enum CommandError {
     InvalidInfoArg(String),
     EmptyCommand,
     Store(String),
-    Reply(io::Error),
+    Reply(String),
     Request(io::Error),
 }
 
@@ -133,16 +134,27 @@ impl<'a> CommandWriter<'a> {
         self.stream
             .write_all(buf.as_bytes())
             .await
-            .map_err(CommandError::Reply)
+            .map_err(|err| CommandError::Reply(err.to_string()))
     }
 
-    pub async fn write_request(&mut self, command: Box<dyn Command>) -> Result<(), CommandError> {
+    pub async fn write_request(
+        &mut self,
+        command: Box<dyn Command>,
+    ) -> Result<Option<RespDataType>, CommandError> {
         let buf = command.generate_request()?;
 
-        self.stream
+        let _ = self
+            .stream
             .write_all(buf.as_bytes())
             .await
-            .map_err(CommandError::Reply)
+            .map_err(|err| CommandError::Reply(err.to_string()));
+
+        let mut reader = RespReader::new(self.stream);
+
+        reader
+            .read()
+            .await
+            .map_err(|err| CommandError::Reply(err.to_string()))
     }
 
     /// The first (and sometimes also the second) bulk string in the array is the command's name.
@@ -499,6 +511,47 @@ impl Command for InfoCommand {
             _ => {
                 unimplemented!("At the moment, keys only supports * as argument");
             }
+        }
+    }
+}
+
+#[derive(Debug)]
+pub enum ReplconfCommandArg {
+    ListeningPort(u16),
+    Capa(String),
+}
+
+#[derive(Debug)]
+pub struct ReplconfCommand {
+    arg: ReplconfCommandArg,
+}
+
+impl ReplconfCommand {
+    pub fn new(arg: ReplconfCommandArg) -> Self {
+        Self { arg }
+    }
+}
+impl Command for ReplconfCommand {
+    fn generate_reply(&self) -> Result<String, CommandError> {
+        Ok(RespEncoder::encode(RespDataType::SimpleString(
+            "OK".to_string(),
+        )))
+    }
+
+    fn generate_request(&self) -> Result<String, CommandError> {
+        match &self.arg {
+            ReplconfCommandArg::ListeningPort(port) => {
+                Ok(RespEncoder::encode(RespDataType::Array(vec![
+                    RespDataType::BulkString("REPLCONF".to_string()),
+                    RespDataType::BulkString("listening-port".to_string()),
+                    RespDataType::BulkString(port.to_string()),
+                ])))
+            }
+            ReplconfCommandArg::Capa(value) => Ok(RespEncoder::encode(RespDataType::Array(vec![
+                RespDataType::BulkString("REPLCONF".to_string()),
+                RespDataType::BulkString("capa".to_string()),
+                RespDataType::BulkString(value.clone()),
+            ]))),
         }
     }
 }

@@ -8,9 +8,8 @@ use std::{
 use tokio::net::TcpListener;
 
 use crate::connections::replica::ReplicaConnection;
-use crate::data_types::RespDecoder;
+use crate::resp::reader::RespReader;
 use crate::store::Store;
-use crate::tcp::TcpStreamReader;
 use crate::{commands::CommandWriter, rdb::sync::RdbSync};
 
 #[derive(Debug)]
@@ -74,7 +73,7 @@ impl ServerConfig {
 
 #[derive(Debug)]
 pub struct ServerInfo {
-    address: SocketAddr,
+    pub address: SocketAddr,
     pub role: ServerRole,
     pub id: String,
     pub offset: u32,
@@ -123,11 +122,10 @@ impl Server {
     }
 
     pub async fn listen(self) -> Result<(), ServerError> {
-        println!("Connecting to server on address {}", self.info.address);
-
         let listener = TcpListener::bind(self.info.address).await.map_err(|_| {
             ServerError::TcpListener("Connection could not be established".to_string())
         })?;
+        let replica_addr = self.info.address;
         let config = Arc::new(self.config);
         let info = Arc::new(self.info);
 
@@ -140,9 +138,9 @@ impl Server {
                 .map_err(|err| ServerError::RdbSync(err.to_string()))?;
         }
 
-        if let ServerRole::Slave(master_node_addr) = info.role {
+        if let ServerRole::Slave(master_addr) = info.role {
             tokio::spawn(async move {
-                let replica_connection = ReplicaConnection::new(master_node_addr);
+                let replica_connection = ReplicaConnection::new(replica_addr, master_addr);
 
                 replica_connection.listen().await.unwrap();
             });
@@ -159,20 +157,17 @@ impl Server {
 
             tokio::spawn(async move {
                 loop {
-                    let mut reader = TcpStreamReader::new(&mut socket);
-                    let message = reader
-                        .read()
-                        .await
-                        .expect("Error when reading from TCPStream");
+                    let mut reader = RespReader::new(&mut socket);
 
-                    if message.is_empty() {
-                        break;
-                    }
-
-                    let mut lines = message.lines();
-
-                    let resp_data_type = RespDecoder::decode(&mut lines)
-                        .expect("Error when decoding string to RESP");
+                    let resp_data_type = match reader.read().await {
+                        Ok(data_type) => match data_type {
+                            Some(value) => value,
+                            None => break,
+                        },
+                        Err(_) => {
+                            break;
+                        }
+                    };
 
                     CommandWriter::from_resp_data_type(resp_data_type, &mut socket)
                         .expect("Error when decoding a command")

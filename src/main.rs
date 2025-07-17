@@ -38,11 +38,11 @@ async fn main() -> anyhow::Result<()> {
                 host
             };
 
-            let addr: SocketAddr = format!("{}:{}", host, port)
+            let master_addr: SocketAddr = format!("{}:{}", host, port)
                 .parse()
                 .expect("Invalid replica url");
 
-            ServerRole::Slave(addr)
+            ServerRole::Slave(master_addr)
         }
         _ => ServerRole::Master,
     };
