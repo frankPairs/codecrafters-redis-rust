@@ -1,10 +1,7 @@
 use std::net::SocketAddr;
 use tokio::net::TcpStream;
 
-use crate::{
-    commands::{CommandWriter, PingCommand, PsyncCommand, ReplconfCommand},
-    resp::reader::RespReader,
-};
+use crate::commands::{CommandWriter, PingCommand, PsyncCommand, ReplconfCommand};
 
 pub struct ReplicaConnection {
     replica_addr: SocketAddr,
