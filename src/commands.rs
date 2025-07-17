@@ -555,3 +555,23 @@ impl Command for ReplconfCommand {
         }
     }
 }
+
+#[derive(Debug)]
+pub struct PsyncCommand;
+
+impl Command for PsyncCommand {
+    fn generate_reply(&self) -> Result<String, CommandError> {
+        todo!("Implement a way reply to a PSYNC command,");
+    }
+
+    // The PSYNC command is used to synchronize the state of the replica with the master. The replica will send this command to the master with two arguments:
+    // The first argument is the replication ID of the master.
+    // The second argument is the offset of the master.
+    fn generate_request(&self) -> Result<String, CommandError> {
+        Ok(RespEncoder::encode(RespDataType::Array(vec![
+            RespDataType::BulkString("PSYNC".to_string()),
+            RespDataType::BulkString("?".to_string()),
+            RespDataType::BulkString("-1".to_string()),
+        ])))
+    }
+}

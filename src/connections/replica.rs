@@ -2,7 +2,7 @@ use std::net::SocketAddr;
 use tokio::net::TcpStream;
 
 use crate::{
-    commands::{CommandWriter, PingCommand, ReplconfCommand},
+    commands::{CommandWriter, PingCommand, PsyncCommand, ReplconfCommand},
     resp::reader::RespReader,
 };
 
@@ -25,12 +25,12 @@ impl ReplicaConnection {
             .expect("Replica listener could not be established");
 
         // Init handshake process
-        self.write_handshake(&mut stream).await?;
+        self.send_handshake(&mut stream).await?;
 
         Ok(())
     }
 
-    async fn write_handshake(&self, stream: &mut TcpStream) -> anyhow::Result<()> {
+    async fn send_handshake(&self, stream: &mut TcpStream) -> anyhow::Result<()> {
         let mut writer = CommandWriter::new(stream);
 
         writer.write_request(Box::new(PingCommand)).await?;
@@ -46,6 +46,8 @@ impl ReplicaConnection {
                 crate::commands::ReplconfCommandArg::Capa(String::from("psync2")),
             )))
             .await?;
+
+        writer.write_request(Box::new(PsyncCommand)).await?;
 
         Ok(())
     }
