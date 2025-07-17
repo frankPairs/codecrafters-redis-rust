@@ -33,15 +33,19 @@ impl ReplicaConnection {
         writer.write_request(Box::new(PingCommand)).await?;
 
         writer
-            .write_request(Box::new(ReplconfCommand::new(
-                crate::commands::ReplconfCommandArg::ListeningPort(self.replica_addr.port()),
-            )))
+            .write_request(Box::new(ReplconfCommand::new(vec![
+                String::from("REPLCONF"),
+                String::from("listening-port"),
+                self.replica_addr.port().to_string(),
+            ])))
             .await?;
 
         writer
-            .write_request(Box::new(ReplconfCommand::new(
-                crate::commands::ReplconfCommandArg::Capa(String::from("psync2")),
-            )))
+            .write_request(Box::new(ReplconfCommand::new(vec![
+                String::from("REPLCONF"),
+                String::from("capa"),
+                String::from("psync2"),
+            ])))
             .await?;
 
         writer.write_request(Box::new(PsyncCommand)).await?;

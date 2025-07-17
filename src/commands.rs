@@ -124,6 +124,9 @@ impl<'a> CommandWriter<'a> {
             name if name.starts_with("INFO") => {
                 Ok(Box::new(InfoCommand::new(self.args.clone(), server_info)))
             }
+            name if name.starts_with("REPLCONF") => {
+                Ok(Box::new(ReplconfCommand::new(self.args.clone())))
+            }
             _ => Err(CommandError::InvalidCommand(
                 "Command does not exists".to_string(),
             )),
@@ -516,21 +519,16 @@ impl Command for InfoCommand {
 }
 
 #[derive(Debug)]
-pub enum ReplconfCommandArg {
-    ListeningPort(u16),
-    Capa(String),
-}
-
-#[derive(Debug)]
 pub struct ReplconfCommand {
-    arg: ReplconfCommandArg,
+    args: Vec<String>,
 }
 
 impl ReplconfCommand {
-    pub fn new(arg: ReplconfCommandArg) -> Self {
-        Self { arg }
+    pub fn new(args: Vec<String>) -> Self {
+        Self { args }
     }
 }
+
 impl Command for ReplconfCommand {
     fn generate_reply(&self) -> Result<String, CommandError> {
         Ok(RespEncoder::encode(RespDataType::SimpleString(
@@ -539,20 +537,18 @@ impl Command for ReplconfCommand {
     }
 
     fn generate_request(&self) -> Result<String, CommandError> {
-        match &self.arg {
-            ReplconfCommandArg::ListeningPort(port) => {
-                Ok(RespEncoder::encode(RespDataType::Array(vec![
-                    RespDataType::BulkString("REPLCONF".to_string()),
-                    RespDataType::BulkString("listening-port".to_string()),
-                    RespDataType::BulkString(port.to_string()),
-                ])))
-            }
-            ReplconfCommandArg::Capa(value) => Ok(RespEncoder::encode(RespDataType::Array(vec![
-                RespDataType::BulkString("REPLCONF".to_string()),
-                RespDataType::BulkString("capa".to_string()),
-                RespDataType::BulkString(value.clone()),
-            ]))),
-        }
+        let key = self.args.get(1).ok_or(CommandError::InvalidFormat(
+            "ReplconfCommand command is missing a key".to_string(),
+        ))?;
+        let value = self.args.get(2).ok_or(CommandError::InvalidFormat(
+            "ReplconfCommand command is missing a value".to_string(),
+        ))?;
+
+        Ok(RespEncoder::encode(RespDataType::Array(vec![
+            RespDataType::BulkString("REPLCONF".to_string()),
+            RespDataType::BulkString(key.to_string()),
+            RespDataType::BulkString(value.to_string()),
+        ])))
     }
 }
 
